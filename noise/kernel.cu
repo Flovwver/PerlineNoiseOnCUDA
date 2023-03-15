@@ -8,13 +8,14 @@
 const unsigned int height = 1024;
 const unsigned int width = 1024;
 
-cudaError_t addWithCuda(float *c);
-bool saveArrayInTxt(float* array);
+cudaError_t GeneratePerlineNoise(float *c);
+bool SaveArrayInTxt(float* array);
+void OutputArray(float* arrayOfElements, int firsOtputElement, int lastOtputElement);
 
 __device__ float Frac(float xFloat) 
 {
-    int xInt = xFloat;
-    return xFloat - xInt;
+    int xInt = fabs(xFloat);
+    return fabs(xFloat) - xInt;
 }
 
 __device__ float Dot(float2 vectorLeft, float2 vectorRight)
@@ -22,10 +23,19 @@ __device__ float Dot(float2 vectorLeft, float2 vectorRight)
     return vectorLeft.x * vectorRight.x + vectorLeft.y * vectorRight.y;
 }
 
-__device__ float Rand(float2 x)
+__device__ float Rand(float2 seed)
 {
-    float2 randomNumber = make_float2(Frac(sin(Dot(x, make_float2(78.233, 12.9898))) * 43758.5453), Frac(sin(Dot(x, make_float2(78.233 * 2, 12.9898 * 2))) * 43758.5453));
-    return abs(randomNumber.x + randomNumber.y) * 0.5;
+    float a = 12.9898;
+
+    float b = 78.233;
+
+    float c = 43758.5453;
+
+    float dt = (seed.x + 5) * a + (seed.y + 5) * b;
+
+    float sn = dt;
+
+    return Frac(sin(sn) * c);
 }
 
 __device__ float Rand(int2 xInt)
@@ -33,13 +43,27 @@ __device__ float Rand(int2 xInt)
     float2 xFloat;
     xFloat.x = xInt.x;
     xFloat.y = xInt.y;
-    Rand(xFloat);
+    return Rand(xFloat);
 }
 
-__device__ float Noise(int2 uv)
+__device__ float GenerateNoiseWithResolution(int2 uv)
 {
     float randomNumber = Rand(uv);
     return randomNumber;
+}
+
+__device__ double cubicInterpolate(double p[4], double x) {
+    return p[1] + 0.5 * x * (p[2] - p[0] + x * (2.0 * p[0] - 5.0 * p[1] + 4.0 * p[2] -
+        p[3] + x * (3.0 * (p[1] - p[2]) + p[3] - p[0])));
+}
+
+__device__ double bicubicInterpolate(double p[4][4], double x, double y) {
+    double arr[4];
+    arr[0] = cubicInterpolate(p[0], y);
+    arr[1] = cubicInterpolate(p[1], y);
+    arr[2] = cubicInterpolate(p[2], y);
+    arr[3] = cubicInterpolate(p[3], y);
+    return cubicInterpolate(arr, x);
 }
 
 __device__ float BilinearInterpolation(float f00, float f01, float f10, float f11, int x0, int x1, int y0, int y1, float2 uv)
@@ -49,46 +73,61 @@ __device__ float BilinearInterpolation(float f00, float f01, float f10, float f1
     return (y1 - uv.y) / (y1 - y0) * fR1 + (uv.y - y0) / (y1 - y0) * fR2;
 }
 
-__device__ float ShellInterpolation(float2 uv, int coeficient)
+__device__ float GenerateOctaveWithBicubic(float2 uv, int coeficient)
 {
-    return BilinearInterpolation(Noise(make_int2(uv.x * coeficient, uv.y * coeficient)), Noise(make_int2(uv.x * coeficient, uv.y * coeficient+1)),
-        Noise(make_int2(uv.x * coeficient + 1, uv.y * coeficient)), Noise(make_int2(uv.x * coeficient+1, uv.y * coeficient+1)), uv.x * coeficient,
+    double p[4][4];
+
+    for (int i = -1; i < 3; i++) {
+        for (int j = -1; j < 3; j++) {
+            int2 coordInt = make_int2(uv.x * coeficient, uv.y * coeficient);
+            coordInt.x += i * coeficient;
+            coordInt.y += j * coeficient;
+            p[i + 1][j + 1] = GenerateNoiseWithResolution(coordInt);
+        }
+    }
+
+    return bicubicInterpolate(p, uv.x, uv.y);
+}
+
+__device__ float GenerateOctaveWithBilinear(float2 uv, int coeficient)
+{
+    return BilinearInterpolation(GenerateNoiseWithResolution(make_int2(uv.x * coeficient, uv.y * coeficient)), GenerateNoiseWithResolution(make_int2(uv.x * coeficient, uv.y * coeficient+1)),
+        GenerateNoiseWithResolution(make_int2(uv.x * coeficient + 1, uv.y * coeficient)), GenerateNoiseWithResolution(make_int2(uv.x * coeficient+1, uv.y * coeficient+1)), uv.x * coeficient,
         uv.x * coeficient + 1, uv.y * coeficient, uv.y * coeficient + 1, make_float2(uv.x * coeficient, uv.y * coeficient));
 }
 
-__device__ float PerlinNoise(float2 uv)
+__device__ float GeneratePerlinNoise(float2 uv)
 {
     float color = 0.f;
-    int numberOfCycles = 10;
-    for (int i = numberOfCycles; i >= 1; i--) 
+    int numberOfCycles = 3;
+    for (int i = numberOfCycles-1; i >= numberOfCycles - 1; i--)
     {
-        color = color * 0.4 + ShellInterpolation(uv, pow(3, i));
+        color = color * 0.5f + GenerateOctaveWithBicubic(uv, pow(2, i));
     }
-    return color * 0.8;
+    if (color > 1.f)
+        color = 0.99f;
+    return color;
 }
 
 __global__ void addKernel(float *c)
 {
     int i = threadIdx.x;
     int j = blockIdx.x;
-    c[i* width + j] = Frac(PerlinNoise(make_float2((float) i / height, (float) j / width)));
+    c[i * width + j] = GeneratePerlinNoise(make_float2((float) i / height, (float) j / width));
 }
 
 int main()
 {
     float* c = new float[height * width];
 
-    // Add vectors in parallel.
-    cudaError_t cudaStatus = addWithCuda(c);
+    cudaError_t cudaStatus = GeneratePerlineNoise(c);
     if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addWithCuda failed!");
+        fprintf(stderr, "Main function of Cuda failed!");
         return 1;
     }
 
-    saveArrayInTxt(c);
+    SaveArrayInTxt(c);
 
-    // cudaDeviceReset must be called before exiting in order for profiling and
-    // tracing tools such as Nsight and Visual Profiler to show complete traces.
     cudaStatus = cudaDeviceReset();
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaDeviceReset failed!");
@@ -98,8 +137,7 @@ int main()
     return 0;
 }
 
-// Helper function for using CUDA to add vectors in parallel.
-cudaError_t addWithCuda(float *c)
+cudaError_t GeneratePerlineNoise(float *c)
 {
     float *dev_c = 0;
     cudaError_t cudaStatus;
@@ -110,15 +148,14 @@ cudaError_t addWithCuda(float *c)
         fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
         goto Error;
     }
-
-    // Allocate GPU buffers for three vectors (two input, one output)    .
+   
     cudaStatus = cudaMalloc((void**)&dev_c, height * width * sizeof(float));
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMalloc failed!");
         goto Error;
     }
 
-    // Launch a kernel on the GPU with one thread for each element.
+
     addKernel<<<height, width>>>(dev_c);
 
     // Check for any errors launching the kernel
@@ -149,17 +186,28 @@ Error:
     return cudaStatus;
 }
 
-bool saveArrayInTxt(float* array) 
+bool SaveArrayInTxt(float* arrayOfElements) 
 {
     FILE* file;
-    if ((file = fopen("perlineNoise.bin", "w")) == NULL) {
+    if ((file = fopen("perlineNoise.txt", "w")) == NULL) {
         printf("error\n");
         return false;
     }
     else {
-        fwrite(array, sizeof(float), height * width, file);
+        for (int i = 0; i < height; i++) {
+            for (int j = 0; j < width; j++)
+                fprintf(file, "%f\t", arrayOfElements[i*width+j]);
+            fprintf(file, "\n");
+        }
     }
     fclose(file);
     printf("Successful \n");
     return true;
+}
+
+void OutputArray(float* arrayOfElements, int firsOtputElement, int lastOtputElement) {
+    for (int i = firsOtputElement; i <= lastOtputElement; i++) {
+        printf("%f\t", arrayOfElements[i]);
+    }
+    printf("\n");
 }
