@@ -79,10 +79,12 @@ __device__ float GenerateOctaveWithBicubic(float2 uv, int coeficient)
 
     for (int i = -1; i < 3; i++) {
         for (int j = -1; j < 3; j++) {
-            int2 coordInt = make_int2(uv.x * coeficient, uv.y * coeficient);
-            coordInt.x += i * coeficient;
-            coordInt.y += j * coeficient;
-            p[i + 1][j + 1] = GenerateNoiseWithResolution(coordInt);
+            int2 coordCoef = make_int2(uv.x * coeficient, uv.y * coeficient);
+            coordCoef.x /= coeficient;
+            coordCoef.y /= coeficient;
+            coordCoef.x += i * coeficient;
+            coordCoef.y += j * coeficient;
+            p[i + 1][j + 1] = GenerateNoiseWithResolution(coordCoef);
         }
     }
 
@@ -99,13 +101,13 @@ __device__ float GenerateOctaveWithBilinear(float2 uv, int coeficient)
 __device__ float GeneratePerlinNoise(float2 uv)
 {
     float color = 0.f;
-    int numberOfCycles = 3;
-    for (int i = numberOfCycles-1; i >= numberOfCycles - 1; i--)
+    int numberOfCycles = 10;
+    for (int i = numberOfCycles-1; i >= 0; i--)
     {
-        color = color * 0.5f + GenerateOctaveWithBicubic(uv, pow(2, i));
+        color = color * 0.5f + GenerateOctaveWithBicubic(uv, pow(2, i)) * 0.5f;
     }
     if (color > 1.f)
-        color = 0.99f;
+        color = 1.f;
     return color;
 }
 
