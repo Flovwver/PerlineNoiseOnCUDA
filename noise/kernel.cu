@@ -76,19 +76,21 @@ __device__ float BilinearInterpolation(float f00, float f01, float f10, float f1
 __device__ float GenerateOctaveWithBicubic(float2 uv, int coeficient)
 {
     double p[4][4];
+    float u, v;
 
-    for (int i = -1; i < 3; i++) {
-        for (int j = -1; j < 3; j++) {
-            int2 coordCoef = make_int2(uv.x * coeficient, uv.y * coeficient);
-            coordCoef.x /= coeficient;
-            coordCoef.y /= coeficient;
-            coordCoef.x += i * coeficient;
-            coordCoef.y += j * coeficient;
-            p[i + 1][j + 1] = GenerateNoiseWithResolution(coordCoef);
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            float2 coordCoef = make_float2(0, 0);
+            coordCoef.x = float(int(uv.x / (1.f / coeficient)) + i - 1) / coeficient + coeficient;
+            coordCoef.y = float(int(uv.y / (1.f / coeficient)) + j - 1) / coeficient + coeficient;
+            p[i][j] = Rand(coordCoef);
         }
     }
 
-    return bicubicInterpolate(p, uv.x, uv.y);
+    u = (uv.x - float(int(uv.x / (1.f / coeficient))) / coeficient) / (float(int(uv.x / (1.f / coeficient)) + 1) / coeficient - float(int(uv.x / (1.f / coeficient))) / coeficient);
+    v = (uv.y - float(int(uv.y / (1.f / coeficient))) / coeficient) / (float(int(uv.y / (1.f / coeficient)) + 1) / coeficient - float(int(uv.y / (1.f / coeficient))) / coeficient);
+
+    return bicubicInterpolate(p, u, v);
 }
 
 __device__ float GenerateOctaveWithBilinear(float2 uv, int coeficient)
@@ -101,10 +103,10 @@ __device__ float GenerateOctaveWithBilinear(float2 uv, int coeficient)
 __device__ float GeneratePerlinNoise(float2 uv)
 {
     float color = 0.f;
-    int numberOfCycles = 10;
-    for (int i = numberOfCycles-1; i >= 0; i--)
+    int numberOfCycles = 7;
+    for (int i = numberOfCycles; i >= 1; i--)
     {
-        color = color * 0.5f + GenerateOctaveWithBicubic(uv, pow(2, i)) * 0.5f;
+        color += GenerateOctaveWithBicubic(uv, pow(2, i)) / pow(2, i);
     }
     if (color > 1.f)
         color = 1.f;
