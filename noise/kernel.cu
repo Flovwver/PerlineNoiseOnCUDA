@@ -7,6 +7,8 @@
 
 const unsigned int height = 1024;
 const unsigned int width = 1024;
+const int SEED = 5;
+
 
 cudaError_t GeneratePerlineNoise(float *c);
 bool SaveArrayInTxt(float* array);
@@ -16,6 +18,11 @@ __device__ float Frac(float xFloat)
 {
     int xInt = fabs(xFloat);
     return fabs(xFloat) - xInt;
+}
+
+__device__ float Modulo(float a, float b) {
+    int intaonb = a / b;
+    return a - b * intaonb;
 }
 
 __device__ float Dot(float2 vectorLeft, float2 vectorRight)
@@ -31,9 +38,9 @@ __device__ float Rand(float2 seed)
 
     float c = 43758.5453;
 
-    float dt = (seed.x + 5) * a + (seed.y + 5) * b;
+    float dt = (seed.x + SEED) * a + (seed.y + SEED) * b;
 
-    float sn = dt;
+    float sn = Modulo(dt, 2 * 3.141592653589793f);
 
     return Frac(sin(sn) * c);
 }
